@@ -1,0 +1,236 @@
+/* IMPORT DATA */
+FILENAME REFFILE '/home/yaoy890/proj 2/S1_Dataset.csv';
+
+PROC IMPORT DATAFILE=REFFILE
+	DBMS=CSV
+	OUT=lumositydata;
+	GETNAMES=YES;
+RUN;
+
+/*
+ DATA CLEAN UP
+ - remove all survey variables
+ - remove redundant variables (crosswords_active_days, lumosity_active_days, age_bin)
+ - remove extraneous "exclude" variable
+ - natural log transform estimated hours
+ - exclude observations where "exclude" = 1
+ - calculate "P" variables (percentage change of scaled pre/post assessment scores)
+*/
+
+DATA LumosityCleaned;
+SET lumositydata;
+WHERE exclude=0; /*exclude participants which are marked as exclude=1*/
+DROP age_bin lost_track_details_pre misplaced_items_pre lost_concentration_pre remembered_names_pre felt_creative_pre good_concentration_pre felt_anxious_pre in_bad_mood_pre felt_sad_pre felt_training_benefits_pre rwc_ave_pre lost_track_details_post misplaced_items_post lost_concentration_post remembered_names_post felt_creative_post good_concentration_post felt_anxious_post in_bad_mood_post felt_sad_post felt_training_benefits_post rwc_ave_post lost_track_details_d misplaced_items_d lost_concentration_d remembered_names_d felt_creative_d good_concentration_d felt_anxious_d in_bad_mood_d felt_sad_d felt_training_benefits_d rwc_ave_d crosswords_active_days lumosity_active_days exclude AR_pre TTS_pre GNG_pre GR_pre MS_pre PM_pre RMS_pre AR_pre AR_post TTS_post GNG_post GR_post MS_post PM_post RMS_post AR_d TTS_d GNG_d GR_d MS_d PM_d RMS_d GI_d; *remove clutter and columns not used;
+log_est_hours=log(est_hours+1); *due to skew in histogram;
+log_age_round=log(age_round+1); *due to skew in histogram;
+AR_p = (AR_2 - AR_1) / AR_1 * 100;
+TTS_p = (TTS_2 - TTS_1) / TTS_1 * 100;
+GNG_p = (GNG_2 - GNG_1) / GNG_1 * 100;
+GR_p = (GR_2 - GR_1) / GR_1 * 100;
+MS_p = (MS_2 - MS_1) / MS_1 * 100;
+PM_p  = (PM_2 - PM_1) / PM_1 * 100;
+RMS_p = (RMS_2 - RMS_1) / RMS_1 * 100;
+GI_p = (GI_2 - GI_1) / GI_1 * 100;
+RUN;
+
+/* PRINT SAMPLE */
+proc print data=LumosityCleaned(obs=50);
+run;
+quit;
+
+
+proc sgscatter data=LumosityCleaned;
+matrix age_round AR_1 TTS_1 GNG_1 GR_1 MS_1 PM_1 RMS_1 GI_1 active_days est_hours / diagonal=(histogram) group = group;
+run;
+
+proc sgscatter data=LumosityCleaned;
+matrix age_round AR_2 TTS_2 GNG_2 GR_2 MS_2 PM_2 RMS_2 GI_2 active_days est_hours / diagonal=(histogram) group = group;
+run;
+
+proc sgscatter data=LumosityCleaned;
+matrix age_round AR_p TTS_p GNG_p GR_p MS_p PM_p RMS_p GI_p active_days est_hours / diagonal=(histogram) group = group;
+run;
+
+
+*log transform age and hours while others have normal distribution;
+
+proc sgscatter data=LumosityCleaned;
+matrix log_age_round AR_1 TTS_1 GNG_1 GR_1 MS_1 PM_1 RMS_1 GI_1 active_days log_est_hours / diagonal=(histogram) group = group;
+run;
+
+proc sgscatter data=LumosityCleaned;
+matrix log_age_round AR_2 TTS_2 GNG_2 GR_2 MS_2 PM_2 RMS_2 GI_2 active_days log_est_hours / diagonal=(histogram) group = group;
+run;
+
+proc sgscatter data=LumosityCleaned;
+matrix log_age_round AR_p TTS_p GNG_p GR_p MS_p PM_p RMS_p GI_p active_days log_est_hours / diagonal=(histogram) group = group;
+run;
+
+*prove that double peaking is prevalent in both groups and not just 1 group;
+*prove why we need to log age and est hours;
+*prove active days is left skewed but CLT applies when dealing w/ large data sets;
+
+proc univariate data=LumosityCleaned ;
+class group;
+var log_age_round active_days log_est_hours;
+histogram;
+run;
+
+*see the correlation among variables;
+
+proc corr data=LumosityCleaned;
+var log_age_round AR_p TTS_p GNG_p GR_p MS_p PM_p RMS_p GI_p active_days log_est_hours;
+run;
+
+/*findings: GI_d is corelated to other variables, since it's derived variable*/
+
+/*check MANOVA assumptions*/
+
+Proc GLM Data=LumosityCleaned plot=diagnostics;
+ Class group;
+ Model log_age_round AR_p TTS_p GNG_p GR_p MS_p PM_p RMS_p GI_p active_days log_est_hours = group;
+ Manova H=_all_ / PrintE PrintH;
+Run;
+
+*automatic variable selection using stepdisc for LDA variable selection;
+
+*pre post without d because redundant;
+proc stepdisc data=LumosityCleaned bsscp tsscp;
+class group;
+var log_age_round active_days log_est_hours AR_1 TTS_1 GNG_1 GR_1 MS_1 PM_1 RMS_1 GI_1 AR_2 TTS_2 GNG_2 GR_2 MS_2 PM_2 RMS_2 GI_2;
+run;
+
+*log_est_hours active_days GI_1 GI_2 GR_2 TTS_2 AR_1 AR_2 log_age_round PM_1;
+
+*pre post and precentage change;
+proc stepdisc data=LumosityCleaned bsscp tsscp;
+class group;
+var log_age_round active_days log_est_hours AR_1 TTS_1 GNG_1 GR_1 MS_1 PM_1 RMS_1 GI_1 AR_2 TTS_2 GNG_2 GR_2 MS_2 PM_2 RMS_2 GI_2 AR_p TTS_p GNG_p GR_p MS_p PM_p RMS_p GI_p;
+run;
+
+*GI_p log_est_hours active_days AR_p GR_2 MS_2 GNG_2 log_age_round TTS_p;
+
+/*LDA without dimensionality reduction*/
+*pre and post;
+proc discrim data=LumosityCleaned pool=test crossvalidate;
+class group;
+var log_est_hours active_days MS_2 GI_1 GI_2 GR_2 TTS_2 AR_1 AR_2 log_age_round PM_1;
+priors "crosswords"=0.5 "lumosity"=0.5; 
+run;
+
+*error rate 0.3906 with MS_2;
+
+*pre and post adjusted priors;
+proc discrim data=LumosityCleaned pool=test crossvalidate;
+class group;
+var log_est_hours active_days MS_2 GI_1 GI_2 GR_2 TTS_2 AR_1 AR_2 log_age_round PM_1;
+priors "crosswords"=0.434358 "lumosity"=0.565642; 
+run;
+
+*error rate 0.3743 with MS_2;
+
+proc discrim data=LumosityCleaned pool=test crossvalidate;
+class group;
+var log_est_hours active_days GI_1 GI_2 GR_2 TTS_2 AR_1 AR_2 log_age_round PM_1;
+priors "crosswords"=0.5 "lumosity"=0.5; 
+run;
+
+*error rate 0.3877 w/o MS_2;
+
+*adjusted;
+proc discrim data=LumosityCleaned pool=test crossvalidate;
+class group;
+var log_est_hours active_days GI_1 GI_2 GR_2 TTS_2 AR_1 AR_2 log_age_round PM_1;
+priors "crosswords"=0.434358 "lumosity"=0.565642; 
+run;
+
+*error rate 0.3678 w/o MS_2;
+
+*pre post and percentage;
+proc discrim data=LumosityCleaned pool=test crossvalidate;
+class group;
+var GI_p log_est_hours active_days AR_p GR_2 MS_2 GNG_2 log_age_round TTS_p;
+priors "crosswords"=0.5 "lumosity"=0.5; 
+run;
+
+*error rate 0.3957;
+
+*adjusted;
+proc discrim data=LumosityCleaned pool=test crossvalidate;
+class group;
+var GI_p log_est_hours active_days AR_p GR_2 MS_2 GNG_2 log_age_round TTS_p;
+priors "crosswords"=0.434358 "lumosity"=0.565642; 
+run;
+
+*error rate 0.3779;
+
+/*PCA to reduce the dimensions*/
+
+*pre and post;
+ods graphics on;
+proc princomp data=LumosityCleaned plots=all out=LumosityPCA;
+var log_age_round active_days log_est_hours AR_1 TTS_1 GNG_1 GR_1 MS_1 PM_1 RMS_1 GI_1 AR_2 TTS_2 GNG_2 GR_2 MS_2 PM_2 RMS_2 GI_2;
+run;
+ods graphics off;
+
+*pre post and percentage;
+ods graphics on;
+proc princomp data=LumosityCleaned plots=all out=LumosityPCAp;
+var log_age_round active_days log_est_hours AR_1 TTS_1 GNG_1 GR_1 MS_1 PM_1 RMS_1 GI_1 AR_2 TTS_2 GNG_2 GR_2 MS_2 PM_2 RMS_2 GI_2 AR_p TTS_p GNG_p GR_p MS_p PM_p RMS_p GI_p;
+run;
+ods graphics off;
+
+*automatic variable selection using stepdisc for LDA variable selection after PCA;
+
+*pre post without d because redundant;
+proc stepdisc data=LumosityPCA bsscp tsscp;
+class group;
+var Prin1 Prin2 Prin3 Prin4 Prin5 Prin6 Prin7 Prin8 Prin9 Prin10 Prin11 Prin12 Prin13 Prin14 Prin15 Prin16 Prin17 Prin18 Prin19;
+run;
+
+*Prin17 Prin16 Prin2 Prin7 Prin4 Prin8 Prin10 Prin15 Prin6 Prin13 Prin9 Prin18 Prin3;
+
+*pre post and precentage change;
+proc stepdisc data=LumosityPCAp bsscp tsscp;
+class group;
+var Prin1 Prin2 Prin3 Prin4 Prin5 Prin6 Prin7 Prin8 Prin9 Prin10 Prin11 Prin12 Prin13 Prin14 Prin15 Prin16 Prin17 Prin18 Prin19 Prin20 Prin21 Prin22 Prin23 Prin24 Prin25 Prin26 Prin27;
+run;
+
+*Prin17 Prin2 Prin10 Prin11 Prin3 Prin25 Prin14 Prin5 Prin24 Prin4 Prin8 Prin15 Prin26;
+
+/*LDA with PCA*/
+*pre and post;
+proc discrim data=LumosityPCA pool=test crossvalidate;
+class group;
+var Prin17 Prin16 Prin2 Prin7 Prin4 Prin8 Prin10 Prin15 Prin6 Prin13 Prin9 Prin18 Prin3;
+priors "crosswords"=0.5 "lumosity"=0.5; 
+run;
+
+*error rate 0.4131;
+
+*adjusted;
+proc discrim data=LumosityPCA pool=test crossvalidate;
+class group;
+var Prin17 Prin16 Prin2 Prin7 Prin4 Prin8 Prin10 Prin15 Prin6 Prin13 Prin9 Prin18 Prin3;
+priors "crosswords"=0.434358 "lumosity"=0.565642;
+run;
+
+*error rate 0.4131;
+
+*pre post and percentage;
+proc discrim data=LumosityPCAp pool=test crossvalidate;
+class group;
+var Prin17 Prin2 Prin10 Prin11 Prin3 Prin25 Prin14 Prin5 Prin24 Prin4 Prin8 Prin15 Prin26;
+priors "crosswords"=0.5 "lumosity"=0.5; 
+run;
+
+*error rate 0.4134;
+
+*adjusted;
+proc discrim data=LumosityPCAp pool=test crossvalidate;
+class group;
+var Prin17 Prin2 Prin10 Prin11 Prin3 Prin25 Prin14 Prin5 Prin24 Prin4 Prin8 Prin15 Prin26;
+priors "crosswords"=0.434358 "lumosity"=0.565642; 
+run;
+
+*error rate 0.4271;
